@@ -1,0 +1,120 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>폰 센서 전송 (MQTT publish)</title>
+<style>
+  body { margin:0; padding:16px; font-family:system-ui,-apple-system,"Malgun Gothic",sans-serif; background:#0f1722; color:#e8eef7; }
+  h1 { font-size:18px; margin:0 0 4px; }
+  p.sub { margin:0 0 16px; color:#9fb0c6; font-size:13px; line-height:1.5; }
+  .card { background:#182234; border-radius:12px; padding:14px; margin-bottom:14px; }
+  label { display:block; font-size:13px; color:#9fb0c6; margin-bottom:6px; }
+  input[type=text], input[type=number] { width:100%; box-sizing:border-box; padding:12px; font-size:18px; border-radius:8px; border:1px solid #2c3b54; background:#0f1722; color:#fff; }
+  input[type=range] { width:100%; }
+  button { width:100%; padding:14px; font-size:16px; border:0; border-radius:10px; background:#2f7cf6; color:#fff; margin-top:10px; }
+  button.gray { background:#3a475c; }
+  .row { display:flex; justify-content:space-between; font-size:14px; padding:3px 0; }
+  .val { font-variant-numeric:tabular-nums; font-weight:600; }
+  .ok { color:#4ade80; } .err { color:#f87171; }
+  code { background:#0f1722; padding:2px 6px; border-radius:4px; font-size:12px; }
+</style>
+</head>
+<body>
+<h1>폰 센서 전송 (MQTT publish)</h1>
+<p class="sub">폰을 기울이면 beta/gamma 값을 <code>khu/pcomp/{ID}/sensor</code> 로 보냅니다.<br>
+센서는 <b>https 주소(GitHub Pages)</b> 에서만 동작합니다. 노트북에서는 아래 슬라이더 발행을 쓰세요.</p>
+
+<div class="card">
+  <label for="idInput">내 ID (학번 뒤 4자리 등 · 뷰어와 같아야 함)</label>
+  <input id="idInput" type="text" inputmode="numeric" placeholder="예: 1234" autocomplete="off">
+  <div class="row" style="margin-top:10px"><span>연결 상태</span><span id="conn" class="val">대기</span></div>
+  <div class="row"><span>보낸 횟수</span><span id="sent" class="val">0</span></div>
+</div>
+
+<div class="card">
+  <b>① 폰 센서로 전송</b>
+  <button id="sensorBtn">센서 시작 &amp; 전송</button>
+  <div class="row" style="margin-top:10px"><span>beta (앞뒤 기울기)</span><span id="bV" class="val">–</span></div>
+  <div class="row"><span>gamma (좌우 기울기)</span><span id="gV" class="val">–</span></div>
+  <div class="row"><span>센서 상태</span><span id="sState" class="val">꺼짐</span></div>
+</div>
+
+<div class="card">
+  <b>② 센서 없이 슬라이더로 전송 (노트북·테스트용)</b>
+  <label style="margin-top:10px" for="sl">beta <span id="slV" class="val">90</span>°</label>
+  <input id="sl" type="range" min="0" max="180" value="90" step="1">
+  <button id="autoBtn" class="gray">자동으로 왔다갔다 (10초 주기)</button>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/mqtt@5.15.2/dist/mqtt.min.js"></script>
+<script>
+// 뷰어(index.html)와 똑같이 맞춰야 하는 값
+const BROKER = 'wss://broker.emqx.io:8084/mqtt';
+const AUTH = {};                                  // EMQX Cloud 계정을 쓰면 { username:'..', password:'..' }
+const 토픽 = id => `khu/pcomp/${id}/sensor`;
+const SEND_MS = 200;                              // 초당 5회 (무료 한도 10회/초 이하)
+
+const $ = id => document.getElementById(id);
+let client = null, sent = 0, beta = 90, gamma = 0, alpha = 0, timer = null, autoTimer = null;
+
+$('idInput').value = (() => { try { return localStorage.getItem('khu_pcomp_id') || ''; } catch (e) { return ''; } })();
+
+function connect() {
+  const id = $('idInput').value.trim();
+  if (!id) { alert('ID를 입력하세요 (뷰어와 같은 값)'); return false; }
+  try { localStorage.setItem('khu_pcomp_id', id); } catch (e) {}
+  if (client) return true;
+  $('conn').textContent = '연결 중…'; $('conn').className = 'val';
+  client = mqtt.connect(BROKER, { ...AUTH, clientId: 'phone-' + id + '-' + Math.random().toString(16).slice(2, 8),
+    reconnectPeriod: 2000, connectTimeout: 8000, clean: true });
+  client.on('connect', () => { $('conn').textContent = '연결됨 ✔'; $('conn').className = 'val ok'; });
+  client.on('reconnect', () => { $('conn').textContent = '재연결 중…'; $('conn').className = 'val'; });
+  client.on('error', e => { $('conn').textContent = '오류: ' + e.message; $('conn').className = 'val err'; });
+  if (!timer) timer = setInterval(publish, SEND_MS);
+  return true;
+}
+
+function publish() {
+  if (!client || !client.connected) return;
+  const id = $('idInput').value.trim();
+  const d = { ax: 0, ay: 0, az: 9.8, alpha: +alpha.toFixed(1), beta: +beta.toFixed(1), gamma: +gamma.toFixed(1), t: Date.now() };
+  client.publish(토픽(id), JSON.stringify(d), { qos: 0 });
+  sent++; $('sent').textContent = sent;
+}
+
+// ① 폰 센서
+function onOrient(e) {
+  if (e.beta == null) return;
+  alpha = e.alpha || 0; beta = e.beta; gamma = e.gamma || 0;
+  $('bV').textContent = beta.toFixed(1) + '°'; $('gV').textContent = gamma.toFixed(1) + '°';
+  $('sl').value = Math.max(0, Math.min(180, beta)); $('slV').textContent = Math.round($('sl').value);
+}
+$('sensorBtn').addEventListener('click', async () => {
+  if (!connect()) return;
+  try {
+    if (typeof DeviceOrientationEvent !== 'undefined' && typeof DeviceOrientationEvent.requestPermission === 'function') {
+      const r = await DeviceOrientationEvent.requestPermission();      // iPhone: 권한 팝업
+      if (r !== 'granted') { $('sState').textContent = '권한 거부됨'; $('sState').className = 'val err'; return; }
+    }
+    addEventListener('deviceorientation', onOrient);
+    $('sState').textContent = '켜짐 ✔'; $('sState').className = 'val ok';
+  } catch (err) { $('sState').textContent = '오류: ' + err.message; $('sState').className = 'val err'; }
+});
+
+// ② 슬라이더 / 자동
+$('sl').addEventListener('input', () => { connect(); beta = +$('sl').value; $('slV').textContent = beta; });
+$('autoBtn').addEventListener('click', () => {
+  if (autoTimer) { clearInterval(autoTimer); autoTimer = null; $('autoBtn').textContent = '자동으로 왔다갔다 (10초 주기)'; return; }
+  if (!connect()) return;
+  $('autoBtn').textContent = '자동 끄기';
+  const t0 = Date.now();
+  autoTimer = setInterval(() => {
+    const p = (Date.now() - t0) / 10000 * Math.PI * 2;
+    beta = 90 + 90 * Math.sin(p); gamma = 30 * Math.sin(p / 2);
+    $('sl').value = beta; $('slV').textContent = Math.round(beta);
+  }, 50);
+});
+</script>
+</body>
+</html>
