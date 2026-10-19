@@ -60,9 +60,9 @@
     <option value="box">임시 박스 (파일 없이 테스트)</option>
   </select>
   <label>오브젝트 파일 주소</label>
-  <input id="objUrl" value="assets/obj.glb">
+  <input id="objUrl" value="assets/Window_Procedural.glb">
   <label>오브젝트 위치 x, y, z (m) · 크기 배율</label>
-  <input id="objPos" value="-2.1, 0.98, 3.1, 0.8, 180">
+  <input id="objPos" value="-2.085, 0.93, 3.27, 0.887, 180">
   <label>센서 값 → 움직임</label>
   <select id="mapMode">
     <option value="rotate">회전 — beta 를 0~90° 로 잘라 y축 회전 (문·뚜껑)</option>
@@ -107,6 +107,7 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 import { SparkRenderer, SplatMesh } from '@sparkjsdev/spark';
 
 /* =====================================================================
@@ -125,19 +126,33 @@ const 토픽센서 = id => `khu/pcomp/${id}/sensor`;          // 폰/ESP32 → �
 const $ = id => document.getElementById(id);
 const scene = new THREE.Scene();
 const camera = new THREE.PerspectiveCamera(60, innerWidth / innerHeight, 0.05, 200);
-camera.position.set(-2.9762537315558806, 0.8650516361368747, 1.8243440601649588);
+camera.position.set(-2.25, 0.95, -0.42);  // 👉 방 뒤쪽에서 방 전체와 창문을 바라보는 시점 (콘솔: camera.position.toArray())
 const renderer = new THREE.WebGLRenderer({ antialias: false });
 renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
 renderer.setSize(innerWidth, innerHeight);
 document.body.appendChild(renderer.domElement);
 const controls = new OrbitControls(camera, renderer.domElement);
-controls.target.set(-0.2612720745693331, 0.8483172331506639, -0.19764000975396334);
+controls.target.set(-2.25, 1.03, 3.2);    // 👉 바라보는 점 = 창문 옆 블라인드 벽
 window.camera = camera;
 window.controls = controls;
 
 scene.add(new SparkRenderer({ renderer }));                 // 스플랫은 이 한 줄이 그립니다
-scene.add(new THREE.AmbientLight(0xffffff, 0.9));           // 스플랫은 조명이 필요 없지만 GLB 는 필요합니다
+scene.add(new THREE.AmbientLight(0xffffff, 0.4));           // 반사 환경(아래)이 빛을 더해 주므로 0.9 → 0.4           // 스플랫은 조명이 필요 없지만 GLB 는 필요합니다
 const sun = new THREE.DirectionalLight(0xffffff, 1.6); sun.position.set(2, 4, 3); scene.add(sun);
+// 반사 환경: GLB 의 유리·금속이 주변을 비춰 보이게 합니다 (스플랫에는 영향 없음)
+scene.environment = new THREE.PMREMGenerator(renderer).fromScene(new RoomEnvironment(), 0.04).texture;
+scene.environmentIntensity = 0.6;   // 👉 반사가 너무 밝으면 줄이고, 약하면 키우세요
+
+// 창 밖 풍경: 창문 바깥 2 m 뒤에 사진 판을 세워 창 너머로만 보이게 합니다 (조명 영향 없음)
+const 바깥사진 = 'assets/outside.jpg';      // 👉 다른 사진으로 바꾸거나 '' 로 두면 끕니다
+if (바깥사진) {
+  const tex = new THREE.TextureLoader().load(바깥사진); tex.colorSpace = THREE.SRGBColorSpace;
+  const 바깥 = new THREE.Mesh(new THREE.PlaneGeometry(3.0, 4.0),            // 사진 비율 3:4
+    new THREE.MeshBasicMaterial({ map: tex, toneMapped: false }));
+  바깥.position.set(-2.085, 1.6, 3.27 + 2.0);   // 창문 중심 x, 높이, 창 면에서 바깥으로 2 m
+  바깥.rotation.y = Math.PI;                     // 방 안(-z)을 바라보게
+  scene.add(바깥);
+}
 scene.add(new THREE.GridHelper(10, 20, 0x334455, 0x223344));
 
 addEventListener('resize', () => {
@@ -151,12 +166,14 @@ addEventListener('resize', () => {
 let 배경 = null;        // SplatMesh
 let 오브젝트 = null;    // THREE.Group — 안에 GLB/스플랫/박스가 들어갑니다 (경첩 역할, 4주차 Group 개념)
 let mixer = null;
+let 창짝 = null;        // GLB 안의 'Window_Sash' 노드(경첩에 달린 창짝). 있으면 이것만 돌리고 창틀은 고정
+const 창짝닫힘각 = 0;    // 👉 Window_Procedural.glb 는 닫힌 상태로 저장돼 있습니다 (예전 obj.glb 는 26.8)
 
 function 지우기(o) { if (o) { scene.remove(o); if (o.dispose) o.dispose(); } }
 
 async function 장면불러오기() {
   $('로딩').style.display = 'block'; $('로딩').textContent = '배경 스플랫을 불러오는 중…';
-  지우기(배경); 지우기(오브젝트); 배경 = 오브젝트 = null; mixer = null;
+  지우기(배경); 지우기(오브젝트); 배경 = 오브젝트 = null; mixer = null; 창짝 = null;
 
   // 배경: Scaniverse/SuperSplat 파일은 대개 Y축이 아래를 향합니다 → X축 180° 회전으로 바로 세웁니다
   const bgUrl = $('bgUrl').value.trim();
@@ -188,6 +205,7 @@ async function 장면불러오기() {
       box.setFromObject(m); m.position.y -= box.min.y;      // 바닥에 딱 붙이기
       m.rotation.y = THREE.MathUtils.degToRad(rotY || 0);   // 👉 앞뒤로 뒤집히면 objPos 다섯 번째 숫자(회전 각도)를 180으로
       오브젝트.add(m);
+      창짝 = m.getObjectByName('Window_Sash') || null;   // 경첩이 있는 창문 모델이면 창짝만 따로 움직입니다
       if (gltf.animations.length) { mixer = new THREE.AnimationMixer(m); mixer.clipAction(gltf.animations[0]).play(); }
     } else if (type === 'splat' && url) {
       const sm = new SplatMesh({ url });
@@ -232,7 +250,13 @@ renderer.setAnimationLoop(() => {
   현재.tx += (목표.tx - 현재.tx) * k;  현재.tz += (목표.tz - 현재.tz) * k;
   if (오브젝트) {
     const mode = $('mapMode').value; const [px] = $('objPos').value.split(',').map(v => parseFloat(v) || 0);
-    if (mode === 'rotate')     { 오브젝트.rotation.set(0, -THREE.MathUtils.degToRad(현재.rot), 0); 오브젝트.position.x = px; }
+    if (창짝) 창짝.rotation.y = THREE.MathUtils.degToRad(창짝닫힘각);   // 기본은 닫힌 창짝
+    if (mode === 'rotate' && 창짝) {
+      // 창틀은 그대로, 창짝만 경첩을 축으로 0~90° 열림 (beta 0~180 → 열림 0~90°)
+      오브젝트.rotation.set(0, 0, 0); 오브젝트.position.x = px;
+      창짝.rotation.y = THREE.MathUtils.degToRad(창짝닫힘각 - 현재.rot / 2);
+    }
+    else if (mode === 'rotate') { 오브젝트.rotation.set(0, -THREE.MathUtils.degToRad(현재.rot), 0); 오브젝트.position.x = px; }
     else if (mode === 'slide') { 오브젝트.rotation.set(0, 0, 0); 오브젝트.position.x = px + 현재.x; }
     else { 오브젝트.rotation.set(THREE.MathUtils.degToRad(현재.tx), 0, THREE.MathUtils.degToRad(현재.tz)); 오브젝트.position.x = px; }
   }
