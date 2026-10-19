@@ -2,7 +2,9 @@
 
 - 트윈 페이지: https://joom3n.github.io/physical0920/
 - 폰 센서 페이지: https://joom3n.github.io/physical0920/phone-publish.html
-
+- 제어판 페이지: https://joom3n.github.io/physical0920/twin-control.html
+  (수업 제공 파일 그대로 사용 — 센서 없이 슬라이더로 MQTT 메시지를 보내 트윈 테스트)
+  
 ## 자산 출처
 - 배경 `assets/room.spz`: 내 방을 직접 스캔 (Scaniverse → SuperSplat → SPZ). 본인 공간, 본인 촬영
 - 창문 `assets/Window_Procedural.glb`: Claude + Blender MCP로 직접 생성 (Blender에서 GLB로 내보냄)
