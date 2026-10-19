@@ -6,6 +6,7 @@
 ## 자산 출처
 - 배경 `assets/room.spz`: 내 방을 직접 스캔 (Scaniverse → SuperSplat → SPZ). 본인 공간, 본인 촬영
 - 창문 `assets/Window_Procedural.glb`: Claude + Blender MCP로 직접 생성 (Blender에서 GLB로 내보냄)
+- 창 밖 풍경 `assets/outside.jpg`: 본인 촬영 사진
 - 이전 창문 `assets/obj.glb`: Meshy AI로 생성 — CC BY 4.0, 출처: Meshy (https://www.meshy.ai)
 
 ## 사용한 라이브러리
